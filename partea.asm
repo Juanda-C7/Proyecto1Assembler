@@ -1,0 +1,1882 @@
+TITLE EDITOR DE TEXTO - PROYECTO 1
+
+    .MODEL SMALL
+    .STACK 64
+
+; Datos del menu y editor
+
+.DATA
+
+TOPROW EQU 05
+BOTROW EQU 10
+LEFCOL EQU 20
+FIRSTROW EQU TOPROW+2
+LASTROW EQU TOPROW+4
+
+ATTRIB DB 1EH
+ROW DB FIRSTROW
+
+TOPLINE DB 0C9H,38 DUP(0CDH),0BBH
+BOTLINE DB 0C8H,38 DUP(0CDH),0BCH
+
+TITLE1 DB ' EDITOR DE TEXTO                   '
+
+MENU1 DB ' Crear archivo nuevo                '
+MENU2 DB ' Abrir archivo existente            '
+MENU3 DB ' Salir                               '
+
+PROMPT DB ' UP/DOWN Mover   ENTER Seleccionar   ALT+X Salir '
+
+MSG_OPEN DB 'Abrir archivo existente'
+
+; Define la paleta de colores personalizada
+
+PALTABLE DB 6,45,30,20
+         DB 7,63,55,50
+PALCOUNT EQU 2
+
+; Datos para crear y validar archivos
+
+MAXINPUT EQU 12
+
+INPUT_NAME DB MAXINPUT
+           DB 0
+           DB MAXINPUT+1 DUP(0)
+
+FILE_NAME DB 13 DUP(0)
+
+FILE_HANDLE DW 0
+
+CREATE_TITLE DB ' CREAR ARCHIVO '
+CREATE_PROMPT DB 'Ingrese nombre (1-8 caracteres):'
+CREATE_EXTENSION DB 'La extension .FDJ se agregara automaticamente.'
+
+CREATE_ERROR_TITLE DB ' ERROR '
+
+ERROR_EMPTY DB 'El nombre no puede estar vacio.'
+ERROR_EMPTY_LEN EQU $-ERROR_EMPTY
+
+ERROR_LONG DB 'El nombre debe tener maximo 8 caracteres.'
+ERROR_LONG_LEN EQU $-ERROR_LONG
+
+ERROR_CHAR DB 'Solo se permiten letras y numeros.'
+ERROR_CHAR_LEN EQU $-ERROR_CHAR
+
+ERROR_EXISTS DB 'El archivo ya existe.'
+ERROR_EXISTS_LEN EQU $-ERROR_EXISTS
+
+ERROR_PATH DB 'No se encontro la ruta o carpeta.'
+ERROR_PATH_LEN EQU $-ERROR_PATH
+
+ERROR_ACCESS DB 'Acceso denegado al crear el archivo.'
+ERROR_ACCESS_LEN EQU $-ERROR_ACCESS
+
+ERROR_FILES DB 'No hay suficientes archivos disponibles.'
+ERROR_FILES_LEN EQU $-ERROR_FILES
+
+ERROR_UNKNOWN DB 'No se pudo crear el archivo.'
+ERROR_UNKNOWN_LEN EQU $-ERROR_UNKNOWN
+
+PRESS_KEY DB 'Presione una tecla para continuar...'
+
+ERROR_CODE DB 0
+
+ERROR_PTRS DW ERROR_EMPTY,ERROR_LONG,ERROR_CHAR,ERROR_EXISTS
+           DW ERROR_PATH,ERROR_ACCESS,ERROR_FILES,ERROR_UNKNOWN
+
+ERROR_LENS DW ERROR_EMPTY_LEN,ERROR_LONG_LEN,ERROR_CHAR_LEN,ERROR_EXISTS_LEN
+           DW ERROR_PATH_LEN,ERROR_ACCESS_LEN,ERROR_FILES_LEN,ERROR_UNKNOWN_LEN
+
+; Datos utilizados por el editor de texto
+
+EDITOR_TOP EQU 01
+EDITOR_BOTTOM EQU 23
+EDITOR_LEFT EQU 00
+EDITOR_RIGHT EQU 79
+
+EDITOR_CENTER EQU 40
+
+EDITOR_ROW DB EDITOR_TOP
+EDITOR_COL DB EDITOR_LEFT
+
+EDITOR_ATTRIB DB 1CH
+EDITOR_COLOR DB 00H
+
+TEXT_COLORS DB 1CH,1AH,1BH
+
+TEXT_BUFFER DB 1840 DUP(' ')
+
+EDITOR_TITLE DB 'EDITOR DE TEXTO'
+EDITOR_INFO DB 'ALT+X Guardar y salir   ALT+Z Menu principal'
+
+; Datos de la imagen colocada con ALT+I
+
+IMG1_COLS EQU 16
+IMG1_ROWS EQU 8
+
+IMG1_DATA DB 255,255,255,255,6,6,6,6,6,255,255,255,255,255,255,255
+          DB 255,255,6,7,7,7,7,7,7,7,7,6,255,255,255,255
+          DB 255,255,6,7,7,7,7,15,15,15,15,15,7,6,255,255
+          DB 255,6,6,6,7,15,15,15,15,15,15,7,7,7,6,255
+          DB 6,6,7,7,6,15,7,6,6,6,7,7,7,7,6,255
+          DB 6,6,7,7,6,6,15,15,7,7,6,6,7,6,255,255
+          DB 255,15,6,6,6,7,7,7,7,6,6,255,255,255,255,255
+          DB 255,255,255,15,6,6,6,6,255,255,255,255,255,255,255,255
+
+IMG_CHAR EQU 0DBH
+IMG_TRANSP EQU 255
+
+IMG_R DB 0
+IMG_C DB 0
+IMG_SROW DB 0
+IMG_SCOL DB 0
+
+; Guarda la posicion de las imagenes colocadas
+
+MAXPLACED EQU 20
+
+PLACEDCOUNT DW 0
+PLACED DB MAXPLACED*3 DUP(0)
+
+.CODE
+
+; Inicia el programa y controla el menu principal
+
+A10MAIN PROC FAR
+
+    MOV AX,@DATA
+    MOV DS,AX
+    MOV ES,AX
+
+    CALL C10SETPAL
+
+A20:
+
+    CALL B10MENU
+
+    MOV ROW,FIRSTROW
+    MOV ATTRIB,1EH
+
+    CALL D10DISPLY
+    CALL C10INPUT
+
+    CMP AX,0100H
+    JNE A20_CHECK_OPEN
+    JMP A20_CREATE
+
+A20_CHECK_OPEN:
+
+    CMP AX,0200H
+    JNE A20_CHECK_EXIT
+    JMP A20_OPEN
+
+A20_CHECK_EXIT:
+
+    CMP AX,0300H
+    JNE A20_CHECK_ALTX
+    JMP A20_EXIT
+
+A20_CHECK_ALTX:
+
+    CMP AX,0400H
+    JNE A20
+    JMP A20_EXIT
+
+; Controla la opcion de crear archivo
+
+A20_CREATE:
+
+    CALL CREATE_FILE
+
+    CMP AL,00H
+    JNE A20_CREATE_ERROR
+    JMP A20_CREATE_EDITOR
+
+A20_CREATE_ERROR:
+
+    CALL SHOW_CREATE_ERROR
+    CALL WAIT_KEY
+    JMP A20
+
+A20_CREATE_EDITOR:
+
+    CALL EDITOR_INIT
+    JMP A20_EDITOR_START
+
+; Controla la opcion de abrir archivo
+
+A20_OPEN:
+
+    CALL Q10CLEAR
+
+    MOV BP,OFFSET MSG_OPEN
+    MOV CX,25
+    MOV DH,10
+    MOV DL,28
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    CALL WAIT_KEY
+    CALL Q10CLEAR
+
+    JMP A20
+
+; Inicia el editor de texto
+
+A20_EDITOR_START:
+
+    CALL DRAW_EDITOR
+    CALL EDITOR_LOOP
+
+    CMP AL,01H
+    JNE A20_CHECK_EDITOR_MENU
+
+    JMP A20_EDITOR_SAVE_EXIT
+
+A20_CHECK_EDITOR_MENU:
+
+    CMP AL,02H
+    JNE A20_EDITOR_RETURN
+
+    JMP A20
+
+A20_EDITOR_RETURN:
+
+    JMP A20
+
+; Guarda el archivo y sale con ALT+X
+
+A20_EDITOR_SAVE_EXIT:
+
+    CALL SAVE_FILE
+    JMP A20_EXIT
+
+; Termina el programa
+
+A20_EXIT:
+
+    MOV AX,4C00H
+    INT 21H
+
+A10MAIN ENDP
+
+; Configura los colores personalizados del editor
+
+C10SETPAL PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH SI
+    PUSH DI
+
+    MOV SI,OFFSET PALTABLE
+    XOR DI,DI
+
+CSP_LOOP:
+
+    CMP DI,PALCOUNT
+    JGE CSP_DONE
+
+    MOV AL,[SI]
+    XOR AH,AH
+    MOV BX,AX
+
+    MOV DH,[SI+1]
+    MOV CH,[SI+2]
+    MOV CL,[SI+3]
+
+    MOV AX,1010H
+    INT 10H
+
+    ADD SI,4
+    INC DI
+    JMP CSP_LOOP
+
+CSP_DONE:
+
+    POP DI
+    POP SI
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+C10SETPAL ENDP
+
+; Dibuja el menu principal del editor
+
+B10MENU PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH BP
+
+    CALL Q10CLEAR
+
+    MOV BP,OFFSET TOPLINE
+    MOV CX,40
+    MOV DH,TOPROW
+    MOV DL,LEFCOL
+    MOV BL,1EH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET TITLE1
+    MOV CX,36
+    MOV DH,TOPROW+1
+    MOV DL,LEFCOL+2
+    MOV BL,1EH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET MENU1
+    MOV CX,36
+    MOV DH,FIRSTROW
+    MOV DL,LEFCOL+2
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET MENU2
+    MOV CX,36
+    MOV DH,FIRSTROW+1
+    MOV DL,LEFCOL+2
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET MENU3
+    MOV CX,36
+    MOV DH,FIRSTROW+2
+    MOV DL,LEFCOL+2
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET BOTLINE
+    MOV CX,40
+    MOV DH,BOTROW
+    MOV DL,LEFCOL
+    MOV BL,1EH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET PROMPT
+    MOV CX,48
+    MOV DH,12
+    MOV DL,16
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    POP BP
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+B10MENU ENDP
+
+; Controla la navegacion y seleccion del menu
+
+C10INPUT PROC NEAR
+
+C10_READ:
+
+    MOV AH,10H
+    INT 16H
+
+    CMP AH,50H
+    JNE C10_CHECK_UP
+    JMP C10_DOWN
+
+C10_CHECK_UP:
+
+    CMP AH,48H
+    JNE C10_CHECK_ENTER
+    JMP C10_UP
+
+C10_CHECK_ENTER:
+
+    CMP AL,0DH
+    JNE C10_CHECK_ALTX
+    JMP C10_ENTER
+
+C10_CHECK_ALTX:
+
+    CMP AX,2D00H
+    JNE C10_READ
+    JMP C10_ALTX
+
+C10_DOWN:
+
+    CMP ROW,LASTROW
+    JAE C10_READ
+
+    MOV ATTRIB,1FH
+    CALL D10DISPLY
+
+    INC ROW
+
+    MOV ATTRIB,1EH
+    CALL D10DISPLY
+
+    JMP C10_READ
+
+C10_UP:
+
+    CMP ROW,FIRSTROW
+    JBE C10_READ
+
+    MOV ATTRIB,1FH
+    CALL D10DISPLY
+
+    DEC ROW
+
+    MOV ATTRIB,1EH
+    CALL D10DISPLY
+
+    JMP C10_READ
+
+C10_ENTER:
+
+    CMP ROW,FIRSTROW
+    JNE C10_ENTER_OPEN
+
+    MOV AX,0100H
+    RET
+
+C10_ENTER_OPEN:
+
+    CMP ROW,FIRSTROW+1
+    JNE C10_ENTER_EXIT
+
+    MOV AX,0200H
+    RET
+
+C10_ENTER_EXIT:
+
+    MOV AX,0300H
+    RET
+
+C10_ALTX:
+
+    MOV AX,0400H
+    RET
+
+C10INPUT ENDP
+
+; Muestra la opcion seleccionada del menu
+
+D10DISPLY PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH BP
+
+    CMP ROW,FIRSTROW
+    JNE D10_CHECK_TWO
+    JMP D10_SHOW_ONE
+
+D10_CHECK_TWO:
+
+    CMP ROW,FIRSTROW+1
+    JNE D10_SHOW_THREE
+    JMP D10_SHOW_TWO
+
+D10_SHOW_ONE:
+
+    MOV BP,OFFSET MENU1
+    MOV CX,36
+    MOV DH,FIRSTROW
+    MOV DL,LEFCOL+2
+    MOV BL,ATTRIB
+    CALL PRINT_AT
+    JMP D10_END
+
+D10_SHOW_TWO:
+
+    MOV BP,OFFSET MENU2
+    MOV CX,36
+    MOV DH,FIRSTROW+1
+    MOV DL,LEFCOL+2
+    MOV BL,ATTRIB
+    CALL PRINT_AT
+    JMP D10_END
+
+D10_SHOW_THREE:
+
+    MOV BP,OFFSET MENU3
+    MOV CX,36
+    MOV DH,FIRSTROW+2
+    MOV DL,LEFCOL+2
+    MOV BL,ATTRIB
+    CALL PRINT_AT
+
+D10_END:
+
+    POP BP
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+D10DISPLY ENDP
+
+; Limpia la pantalla del programa
+
+Q10CLEAR PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+
+    MOV AX,0600H
+    MOV BH,1EH
+    MOV CX,0000H
+    MOV DX,184FH
+
+    INT 10H
+
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+Q10CLEAR ENDP
+
+; Imprime texto en una posicion de la pantalla
+
+PRINT_AT PROC NEAR
+
+    PUSH AX
+
+    MOV AX,1301H
+    MOV BH,00H
+
+    INT 10H
+
+    POP AX
+
+    RET
+
+PRINT_AT ENDP
+
+; Espera una tecla antes de continuar
+
+WAIT_KEY PROC NEAR
+
+    MOV AH,00H
+    INT 16H
+
+    RET
+
+WAIT_KEY ENDP
+
+; Muestra la pantalla para crear un archivo
+
+SHOW_CREATE_SCREEN PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH BP
+
+    CALL Q10CLEAR
+
+    MOV BP,OFFSET CREATE_TITLE
+    MOV CX,15
+    MOV DH,05
+    MOV DL,22
+    MOV BL,1EH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET CREATE_PROMPT
+    MOV CX,32
+    MOV DH,08
+    MOV DL,24
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET CREATE_EXTENSION
+    MOV CX,46
+    MOV DH,11
+    MOV DL,16
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV AH,02H
+    MOV BH,00H
+    MOV DH,09
+    MOV DL,22
+
+    INT 10H
+
+    POP BP
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+SHOW_CREATE_SCREEN ENDP
+
+; Crea el archivo y valida su nombre
+
+CREATE_FILE PROC NEAR
+
+    CALL SHOW_CREATE_SCREEN
+
+    MOV BYTE PTR INPUT_NAME+1,00H
+
+    LEA DX,INPUT_NAME
+    MOV AH,0AH
+    INT 21H
+
+    CMP BYTE PTR INPUT_NAME+1,00H
+    JNE CREATE_CHECK_LENGTH
+    JMP CREATE_EMPTY_ERROR
+
+CREATE_EMPTY_ERROR:
+
+    MOV ERROR_CODE,01H
+    MOV AL,01H
+    RET
+
+CREATE_CHECK_LENGTH:
+
+    CMP BYTE PTR INPUT_NAME+1,08H
+    JBE CREATE_CHECK_CHARS
+    JMP CREATE_LONG_ERROR
+
+CREATE_LONG_ERROR:
+
+    MOV ERROR_CODE,02H
+    MOV AL,01H
+    RET
+
+CREATE_CHECK_CHARS:
+
+    CALL PROCESS_NAME
+
+    CMP AL,00H
+    JE CREATE_BUILD_NAME
+    JMP CREATE_CHAR_ERROR
+
+CREATE_CHAR_ERROR:
+
+    MOV ERROR_CODE,03H
+    MOV AL,01H
+    RET
+
+CREATE_BUILD_NAME:
+
+    CALL BUILD_FILENAME
+
+    LEA DX,FILE_NAME
+    MOV CX,0000H
+    MOV AH,5BH
+
+    INT 21H
+
+    JNC CREATE_SUCCESS
+    JMP CREATE_DOS_ERROR
+
+CREATE_SUCCESS:
+
+    MOV FILE_HANDLE,AX
+    MOV AL,00H
+    RET
+
+CREATE_DOS_ERROR:
+
+    CMP AX,0050H
+    JNE CREATE_ERROR_PATH
+    JMP CREATE_EXISTS_ERROR
+
+CREATE_EXISTS_ERROR:
+
+    MOV ERROR_CODE,04H
+    MOV AL,01H
+    RET
+
+CREATE_ERROR_PATH:
+
+    CMP AX,0003H
+    JNE CREATE_ERROR_ACCESS
+    JMP CREATE_PATH_ERROR
+
+CREATE_PATH_ERROR:
+
+    MOV ERROR_CODE,05H
+    MOV AL,01H
+    RET
+
+CREATE_ERROR_ACCESS:
+
+    CMP AX,0005H
+    JNE CREATE_ERROR_FILES
+    JMP CREATE_ACCESS_ERROR
+
+CREATE_ACCESS_ERROR:
+
+    MOV ERROR_CODE,06H
+    MOV AL,01H
+    RET
+
+CREATE_ERROR_FILES:
+
+    CMP AX,0004H
+    JNE CREATE_ERROR_OTHER
+    JMP CREATE_FILES_ERROR
+
+CREATE_FILES_ERROR:
+
+    MOV ERROR_CODE,07H
+    MOV AL,01H
+    RET
+
+CREATE_ERROR_OTHER:
+
+    MOV ERROR_CODE,08H
+    MOV AL,01H
+    RET
+
+CREATE_FILE ENDP
+
+; Valida caracteres y convierte el nombre a mayusculas
+
+PROCESS_NAME PROC NEAR
+
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH SI
+
+    XOR CX,CX
+    MOV CL,BYTE PTR INPUT_NAME+1
+
+    LEA SI,INPUT_NAME+2
+
+PN_LOOP:
+
+    CMP CX,0000H
+    JE PN_VALID
+    JMP PN_CHECK_CHAR
+
+PN_CHECK_CHAR:
+
+    MOV AL,[SI]
+
+    CMP AL,'A'
+    JB PN_CHECK_LOWER
+
+    CMP AL,'Z'
+    JBE PN_NEXT
+
+    JMP PN_CHECK_LOWER
+
+PN_CHECK_LOWER:
+
+    CMP AL,'a'
+    JB PN_CHECK_DIGIT
+
+    CMP AL,'z'
+    JA PN_CHECK_DIGIT
+
+    JMP PN_UPPER
+
+PN_UPPER:
+
+    SUB AL,20H
+    MOV [SI],AL
+
+    JMP PN_NEXT
+
+PN_CHECK_DIGIT:
+
+    CMP AL,'0'
+    JB PN_INVALID
+
+    CMP AL,'9'
+    JA PN_INVALID
+
+    JMP PN_NEXT
+
+PN_NEXT:
+
+    INC SI
+    DEC CX
+
+    JMP PN_LOOP
+
+PN_INVALID:
+
+    MOV AL,01H
+    JMP PN_END
+
+PN_VALID:
+
+    MOV AL,00H
+
+PN_END:
+
+    POP SI
+    POP DX
+    POP CX
+    POP BX
+
+    RET
+
+PROCESS_NAME ENDP
+
+; Agrega la extension FDJ al nombre del archivo
+
+BUILD_FILENAME PROC NEAR
+
+    PUSH AX
+    PUSH CX
+    PUSH SI
+    PUSH DI
+
+    LEA SI,INPUT_NAME+2
+    LEA DI,FILE_NAME
+
+    XOR CX,CX
+    MOV CL,BYTE PTR INPUT_NAME+1
+
+BF_COPY:
+
+    CMP CX,0000H
+    JE BF_EXTENSION
+
+    MOV AL,[SI]
+    MOV [DI],AL
+
+    INC SI
+    INC DI
+    DEC CX
+
+    JMP BF_COPY
+
+BF_EXTENSION:
+
+    MOV BYTE PTR [DI],'.'
+    INC DI
+
+    MOV BYTE PTR [DI],'F'
+    INC DI
+
+    MOV BYTE PTR [DI],'D'
+    INC DI
+
+    MOV BYTE PTR [DI],'J'
+    INC DI
+
+    MOV BYTE PTR [DI],00H
+
+    POP DI
+    POP SI
+    POP CX
+    POP AX
+
+    RET
+
+BUILD_FILENAME ENDP
+
+; Muestra el mensaje correspondiente al error
+
+SHOW_CREATE_ERROR PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH SI
+    PUSH BP
+
+    CALL Q10CLEAR
+
+    MOV BP,OFFSET CREATE_ERROR_TITLE
+    MOV CX,7
+    MOV DH,05
+    MOV DL,36
+    MOV BL,1CH
+    CALL PRINT_AT
+
+    XOR AX,AX
+    MOV AL,ERROR_CODE
+    DEC AL
+
+    SHL AX,1
+
+    MOV SI,AX
+
+    MOV BP,ERROR_PTRS[SI]
+    MOV CX,ERROR_LENS[SI]
+
+    MOV DH,09
+    MOV DL,20
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET PRESS_KEY
+    MOV CX,36
+    MOV DH,14
+    MOV DL,22
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    POP BP
+    POP SI
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+SHOW_CREATE_ERROR ENDP
+
+; Inicializa el espacio de escritura del editor
+
+EDITOR_INIT PROC NEAR
+
+    PUSH AX
+    PUSH CX
+    PUSH DI
+
+    LEA DI,TEXT_BUFFER
+
+    MOV CX,1840
+    MOV AL,' '
+
+    REP STOSB
+
+    MOV EDITOR_ROW,EDITOR_TOP
+    MOV EDITOR_COL,EDITOR_LEFT
+
+    MOV EDITOR_COLOR,00H
+    MOV AL,TEXT_COLORS
+    MOV EDITOR_ATTRIB,AL
+
+    MOV PLACEDCOUNT,0
+
+    POP DI
+    POP CX
+    POP AX
+
+    RET
+
+EDITOR_INIT ENDP
+
+; Dibuja la pantalla principal del editor
+
+DRAW_EDITOR PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH BP
+
+    CALL Q10CLEAR
+
+    MOV BP,OFFSET EDITOR_TITLE
+    MOV CX,15
+    MOV DH,00
+    MOV DL,32
+    MOV BL,1EH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET EDITOR_INFO
+    MOV CX,44
+    MOV DH,24
+    MOV DL,29
+    MOV BL,1EH
+    CALL PRINT_AT
+
+    MOV AH,02H
+    MOV BH,00H
+    MOV DH,EDITOR_ROW
+    MOV DL,EDITOR_COL
+
+    INT 10H
+
+    POP BP
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+DRAW_EDITOR ENDP
+
+; Controla la escritura, navegacion y atajos del editor
+
+EDITOR_LOOP PROC NEAR
+
+EL_READ:
+
+    MOV AH,01H
+    INT 16H
+
+    JZ EL_READ
+
+    MOV AH,02H
+    INT 16H
+
+    MOV DL,AL
+
+    MOV AH,00H
+    INT 16H
+
+    MOV BL,AH
+
+    TEST DL,08H
+    JNZ EL_ALT_KEY
+
+    JMP EL_NORMAL_KEY
+
+; Controla las teclas ALT del editor
+
+EL_ALT_KEY:
+
+    CMP BL,32H
+    JNE EL_CHECK_ALTC
+
+    JMP EL_ALTM
+
+EL_CHECK_ALTC:
+
+    CMP BL,2EH
+    JNE EL_CHECK_ALTU
+
+    JMP EL_ALTC
+
+EL_CHECK_ALTU:
+
+    CMP BL,16H
+    JNE EL_CHECK_ALTI
+
+    JMP EL_ALTU
+
+EL_CHECK_ALTI:
+
+    CMP BL,17H
+    JNE EL_CHECK_ALTX_ALT
+
+    JMP EL_ALTI
+
+EL_CHECK_ALTX_ALT:
+
+    CMP BL,2DH
+    JNE EL_CHECK_ALTZ
+
+    JMP EL_ALTX
+
+EL_CHECK_ALTZ:
+
+    CMP BL,2CH
+    JNE EL_NORMAL_KEY
+
+    JMP EL_ALTZ
+
+; Controla las teclas normales del editor
+
+EL_NORMAL_KEY:
+
+    CMP BL,4BH
+    JNE EL_CHECK_RIGHT
+
+    JMP EL_LEFT
+
+EL_CHECK_RIGHT:
+
+    CMP BL,4DH
+    JNE EL_CHECK_UP
+
+    JMP EL_RIGHT
+
+EL_CHECK_UP:
+
+    CMP BL,48H
+    JNE EL_CHECK_DOWN
+
+    JMP EL_UP
+
+EL_CHECK_DOWN:
+
+    CMP BL,50H
+    JNE EL_CHECK_ENTER
+
+    JMP EL_DOWN
+
+EL_CHECK_ENTER:
+
+    CMP AL,0DH
+    JNE EL_CHECK_BACKSPACE
+
+    JMP EL_ENTER
+
+EL_CHECK_BACKSPACE:
+
+    CMP AL,08H
+    JNE EL_CHECK_COLON
+
+    JMP EL_BACKSPACE
+
+; Reconoce los dos puntos como caracter permitido
+
+EL_CHECK_COLON:
+
+    CMP AX,3E34H
+    JNE EL_CHECK_TEXT
+
+    MOV AL,':'
+
+    JMP EL_CHECK_TEXT
+
+; Valida los caracteres permitidos para escribir
+
+EL_CHECK_TEXT:
+
+    PUSH AX
+
+    CALL VALIDATE_TEXT_CHAR
+
+    CMP AL,01H
+
+    POP AX
+
+    JE EL_TEXT_VALID
+
+    JMP EL_READ
+
+EL_TEXT_VALID:
+
+    JMP EL_WRITE
+
+; Escribe el caracter en el editor
+
+EL_WRITE:
+
+    PUSH AX
+
+    CALL GET_BUFFER_POSITION
+
+    POP AX
+
+    MOV [DI],AL
+
+    MOV AH,09H
+    MOV BH,00H
+    MOV BL,EDITOR_ATTRIB
+    MOV CX,0001H
+
+    INT 10H
+
+    CALL RESTORE_IMAGE_PIXEL
+    CALL MOVE_CURSOR_RIGHT
+
+    JMP EL_READ
+
+; Mueve el cursor a la siguiente linea
+
+EL_ENTER:
+
+    MOV EDITOR_COL,EDITOR_LEFT
+
+    INC EDITOR_ROW
+
+    CMP EDITOR_ROW,EDITOR_BOTTOM
+    JBE EL_ENTER_CURSOR
+
+    JMP EL_ENTER_LIMIT
+
+EL_ENTER_LIMIT:
+
+    MOV EDITOR_ROW,EDITOR_BOTTOM
+
+EL_ENTER_CURSOR:
+
+    CALL UPDATE_CURSOR
+
+    JMP EL_READ
+
+; Borra el caracter anterior
+
+EL_BACKSPACE:
+
+    CMP EDITOR_COL,EDITOR_LEFT
+    JNE EL_BACKSPACE_DELETE
+
+    JMP EL_BACKSPACE_END
+
+EL_BACKSPACE_DELETE:
+
+    DEC EDITOR_COL
+
+    CALL GET_BUFFER_POSITION
+
+    MOV BYTE PTR [DI],' '
+
+    MOV AH,02H
+    MOV BH,00H
+    MOV DH,EDITOR_ROW
+    MOV DL,EDITOR_COL
+
+    INT 10H
+
+    MOV AL,' '
+    MOV AH,09H
+    MOV BH,00H
+    MOV BL,EDITOR_ATTRIB
+    MOV CX,0001H
+
+    INT 10H
+
+    CALL RESTORE_IMAGE_PIXEL
+
+EL_BACKSPACE_END:
+
+    CALL UPDATE_CURSOR
+
+    JMP EL_READ
+
+; Mueve el cursor hacia la izquierda
+
+EL_LEFT:
+
+    CMP EDITOR_COL,EDITOR_LEFT
+    JNE EL_LEFT_MOVE
+
+    JMP EL_READ
+
+EL_LEFT_MOVE:
+
+    DEC EDITOR_COL
+    CALL UPDATE_CURSOR
+
+    JMP EL_READ
+
+; Mueve el cursor hacia la derecha
+
+EL_RIGHT:
+
+    CMP EDITOR_COL,EDITOR_RIGHT
+    JB EL_RIGHT_MOVE
+
+    JMP EL_READ
+
+EL_RIGHT_MOVE:
+
+    INC EDITOR_COL
+    CALL UPDATE_CURSOR
+
+    JMP EL_READ
+
+; Mueve el cursor hacia arriba
+
+EL_UP:
+
+    CMP EDITOR_ROW,EDITOR_TOP
+    JA EL_UP_MOVE
+
+    JMP EL_READ
+
+EL_UP_MOVE:
+
+    DEC EDITOR_ROW
+    CALL UPDATE_CURSOR
+
+    JMP EL_READ
+
+; Mueve el cursor hacia abajo
+
+EL_DOWN:
+
+    CMP EDITOR_ROW,EDITOR_BOTTOM
+    JB EL_DOWN_MOVE
+
+    JMP EL_READ
+
+EL_DOWN_MOVE:
+
+    INC EDITOR_ROW
+    CALL UPDATE_CURSOR
+
+    JMP EL_READ
+
+; Cambia el color de la letra con ALT+M
+
+EL_ALTM:
+
+    INC EDITOR_COLOR
+
+    CMP EDITOR_COLOR,03H
+    JB EL_ALTM_SET
+
+    MOV EDITOR_COLOR,00H
+
+EL_ALTM_SET:
+
+    XOR BX,BX
+    MOV BL,EDITOR_COLOR
+
+    MOV AL,TEXT_COLORS[BX]
+    MOV EDITOR_ATTRIB,AL
+
+    CALL UPDATE_CURSOR
+
+    JMP EL_READ
+
+; Centra el cursor con ALT+C
+
+EL_ALTC:
+
+    MOV EDITOR_COL,EDITOR_CENTER
+
+    CALL UPDATE_CURSOR
+
+    JMP EL_READ
+
+; Lleva el cursor arriba con ALT+U
+
+EL_ALTU:
+
+    MOV EDITOR_ROW,EDITOR_TOP
+
+    CALL UPDATE_CURSOR
+
+    JMP EL_READ
+
+; Coloca la imagen con ALT+I
+
+EL_ALTI:
+
+    CALL G10ADD
+    CALL DRAW_IMAGE1
+
+    JMP EL_READ
+
+; Guarda y sale con ALT+X
+
+EL_ALTX:
+
+    MOV AL,01H
+
+    RET
+
+; Regresa al menu con ALT+Z
+
+EL_ALTZ:
+
+    MOV AL,02H
+
+    RET
+
+EDITOR_LOOP ENDP
+
+; Registra la posicion de una imagen colocada
+
+G10ADD PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DI
+
+    MOV BX,PLACEDCOUNT
+    CMP BX,MAXPLACED
+    JB G10_SPACE_OK
+
+    JMP G10_END
+
+G10_SPACE_OK:
+
+    MOV AX,BX
+    MOV CX,3
+    MUL CX
+
+    MOV DI,OFFSET PLACED
+    ADD DI,AX
+
+    MOV BYTE PTR [DI],01H
+
+    MOV AL,EDITOR_ROW
+    MOV [DI+1],AL
+
+    MOV AL,EDITOR_COL
+    MOV [DI+2],AL
+
+    INC PLACEDCOUNT
+
+G10_END:
+
+    POP DI
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+G10ADD ENDP
+
+; Restaura la imagen despues de escribir sobre ella
+
+RESTORE_IMAGE_PIXEL PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH SI
+    PUSH DI
+
+    XOR SI,SI
+
+RIP_LOOP:
+
+    MOV AX,SI
+    CMP AX,PLACEDCOUNT
+    JB RIP_ENTRY_OK
+
+    JMP RIP_DONE
+
+RIP_ENTRY_OK:
+
+    MOV AX,SI
+    MOV CX,3
+    MUL CX
+
+    MOV DI,OFFSET PLACED
+    ADD DI,AX
+
+    XOR AX,AX
+    MOV AL,EDITOR_ROW
+
+    XOR CX,CX
+    MOV CL,[DI+1]
+
+    SUB AX,CX
+
+    JNS RIP_ROW_POS
+
+    JMP RIP_NEXT
+
+RIP_ROW_POS:
+
+    CMP AX,IMG1_ROWS
+    JB RIP_ROW_OK
+
+    JMP RIP_NEXT
+
+RIP_ROW_OK:
+
+    MOV DX,AX
+
+    XOR AX,AX
+    MOV AL,EDITOR_COL
+
+    XOR CX,CX
+    MOV CL,[DI+2]
+
+    SUB AX,CX
+
+    JNS RIP_COL_POS
+
+    JMP RIP_NEXT
+
+RIP_COL_POS:
+
+    CMP AX,IMG1_COLS
+    JB RIP_COL_OK
+
+    JMP RIP_NEXT
+
+RIP_COL_OK:
+
+    PUSH AX
+
+    MOV AX,DX
+    MOV CX,IMG1_COLS
+    MUL CX
+
+    POP CX
+
+    ADD AX,CX
+
+    MOV BX,OFFSET IMG1_DATA
+    ADD BX,AX
+
+    MOV AL,[BX]
+
+    CMP AL,IMG_TRANSP
+    JNE RIP_DRAW_PIXEL
+
+    JMP RIP_NEXT
+
+RIP_DRAW_PIXEL:
+
+    MOV BL,AL
+
+    MOV AH,02H
+    MOV BH,00H
+    MOV DH,EDITOR_ROW
+    MOV DL,EDITOR_COL
+
+    INT 10H
+
+    MOV AH,09H
+    MOV AL,IMG_CHAR
+    MOV BH,00H
+    MOV CX,0001H
+
+    INT 10H
+
+RIP_NEXT:
+
+    INC SI
+    JMP RIP_LOOP
+
+RIP_DONE:
+
+    CALL UPDATE_CURSOR
+
+    POP DI
+    POP SI
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+RESTORE_IMAGE_PIXEL ENDP
+
+; Dibuja la imagen del editor
+
+DRAW_IMAGE1 PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH SI
+
+    MOV AL,EDITOR_ROW
+    MOV IMG_SROW,AL
+
+    MOV AL,EDITOR_COL
+    MOV IMG_SCOL,AL
+
+    MOV IMG_R,0
+
+DI_ROWLOOP:
+
+    MOV AL,IMG_R
+    CMP AL,IMG1_ROWS
+    JB DI_ROW_OK
+
+    JMP DI_DONE
+
+DI_ROW_OK:
+
+    MOV AL,IMG_SROW
+    ADD AL,IMG_R
+
+    CMP AL,EDITOR_BOTTOM
+    JBE DI_ROW_VISIBLE
+
+    JMP DI_DONE
+
+DI_ROW_VISIBLE:
+
+    MOV IMG_C,0
+
+DI_COLLOOP:
+
+    MOV AL,IMG_C
+    CMP AL,IMG1_COLS
+    JB DI_COL_OK
+
+    JMP DI_NEXTROW
+
+DI_COL_OK:
+
+    MOV AL,IMG_SCOL
+    ADD AL,IMG_C
+
+    CMP AL,EDITOR_RIGHT
+    JBE DI_COL_VISIBLE
+
+    JMP DI_NEXTCOL
+
+DI_COL_VISIBLE:
+
+    XOR AX,AX
+    MOV AL,IMG_R
+
+    MOV BL,IMG1_COLS
+    MUL BL
+
+    XOR BX,BX
+    MOV BL,IMG_C
+
+    ADD AX,BX
+
+    MOV SI,OFFSET IMG1_DATA
+    ADD SI,AX
+
+    MOV AL,[SI]
+
+    CMP AL,IMG_TRANSP
+    JNE DI_DRAW_PIXEL
+
+    JMP DI_NEXTCOL
+
+DI_DRAW_PIXEL:
+
+    MOV BL,AL
+
+    MOV AH,02H
+    MOV BH,00H
+
+    MOV DH,IMG_SROW
+    ADD DH,IMG_R
+
+    MOV DL,IMG_SCOL
+    ADD DL,IMG_C
+
+    INT 10H
+
+    MOV AH,09H
+    MOV AL,IMG_CHAR
+    MOV BH,00H
+    MOV CX,0001H
+
+    INT 10H
+
+DI_NEXTCOL:
+
+    INC IMG_C
+    JMP DI_COLLOOP
+
+DI_NEXTROW:
+
+    INC IMG_R
+    JMP DI_ROWLOOP
+
+DI_DONE:
+
+    CALL UPDATE_CURSOR
+
+    POP SI
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+DRAW_IMAGE1 ENDP
+
+; Valida los caracteres permitidos en el texto
+
+VALIDATE_TEXT_CHAR PROC NEAR
+
+    CMP AL,' '
+    JE VTC_OK
+
+    CMP AL,'A'
+    JB VTC_LOWER
+
+    CMP AL,'Z'
+    JBE VTC_OK
+
+    JMP VTC_LOWER
+
+VTC_LOWER:
+
+    CMP AL,'a'
+    JB VTC_DIGIT
+
+    CMP AL,'z'
+    JBE VTC_OK
+
+    JMP VTC_DIGIT
+
+VTC_DIGIT:
+
+    CMP AL,'0'
+    JB VTC_SYMBOLS
+
+    CMP AL,'9'
+    JBE VTC_OK
+
+    JMP VTC_SYMBOLS
+
+VTC_SYMBOLS:
+
+    CMP AL,','
+    JE VTC_OK
+
+    CMP AL,'.'
+    JE VTC_OK
+
+    CMP AL,':'
+    JE VTC_OK
+
+    MOV AL,00H
+    RET
+
+VTC_OK:
+
+    MOV AL,01H
+    RET
+
+VALIDATE_TEXT_CHAR ENDP
+
+; Calcula la posicion del cursor dentro del buffer
+
+GET_BUFFER_POSITION PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH DX
+
+    XOR AX,AX
+
+    MOV AL,EDITOR_ROW
+    SUB AL,EDITOR_TOP
+
+    MOV BL,80
+    MUL BL
+
+    XOR BX,BX
+
+    MOV BL,EDITOR_COL
+    ADD AX,BX
+
+    LEA DI,TEXT_BUFFER
+    ADD DI,AX
+
+    POP DX
+    POP BX
+    POP AX
+
+    RET
+
+GET_BUFFER_POSITION ENDP
+
+; Avanza el cursor despues de escribir
+
+MOVE_CURSOR_RIGHT PROC NEAR
+
+    CMP EDITOR_COL,EDITOR_RIGHT
+    JAE MCR_NEW_LINE
+
+    INC EDITOR_COL
+    JMP MCR_UPDATE
+
+MCR_NEW_LINE:
+
+    MOV EDITOR_COL,EDITOR_LEFT
+
+    CMP EDITOR_ROW,EDITOR_BOTTOM
+    JB MCR_NEXT_ROW
+
+    JMP MCR_UPDATE
+
+MCR_NEXT_ROW:
+
+    INC EDITOR_ROW
+
+MCR_UPDATE:
+
+    CALL UPDATE_CURSOR
+
+    RET
+
+MOVE_CURSOR_RIGHT ENDP
+
+; Actualiza la posicion del cursor en pantalla
+
+UPDATE_CURSOR PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH DX
+
+    MOV AH,02H
+    MOV BH,00H
+    MOV DH,EDITOR_ROW
+    MOV DL,EDITOR_COL
+
+    INT 10H
+
+    POP DX
+    POP BX
+    POP AX
+
+    RET
+
+UPDATE_CURSOR ENDP
+
+; Guarda el contenido del editor en el archivo
+
+SAVE_FILE PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+
+    MOV BX,FILE_HANDLE
+
+    MOV AX,4200H
+
+    XOR CX,CX
+    XOR DX,DX
+
+    INT 21H
+
+    MOV BX,FILE_HANDLE
+
+    MOV AH,40H
+    MOV CX,1840
+
+    LEA DX,TEXT_BUFFER
+
+    INT 21H
+
+    MOV BX,FILE_HANDLE
+
+    MOV AH,3EH
+
+    INT 21H
+
+    MOV FILE_HANDLE,0000H
+
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+SAVE_FILE ENDP
+
+END A10MAIN
