@@ -1,0 +1,1455 @@
+TITLE PARTEB - Guardado rapido con ALT+S y Abrir archivo existente
+
+    .MODEL SMALL
+
+; Datos y funciones definidos en PARTEA.ASM, se usan aqui como externos
+
+EXTRN FILE_HANDLE:WORD
+EXTRN TEXT_BUFFER:BYTE
+EXTRN ATTR_BUFFER:BYTE
+EXTRN INPUT_NAME:BYTE
+EXTRN FILE_NAME:BYTE
+EXTRN EDITOR_ATTRIB:BYTE
+EXTRN EDITOR_ROW:BYTE
+EXTRN EDITOR_COL:BYTE
+EXTRN PRESS_KEY:BYTE
+EXTRN CREATE_ERROR_TITLE:BYTE
+
+EXTRN Q10CLEAR:NEAR
+EXTRN PRINT_AT:NEAR
+EXTRN GET_FILENAME_INPUT:NEAR
+EXTRN PROCESS_NAME:NEAR
+EXTRN BUILD_FILENAME:NEAR
+EXTRN EDITOR_INIT:NEAR
+EXTRN GET_BUFFER_POSITION:NEAR
+EXTRN RESTORE_IMAGE_PIXEL:NEAR
+EXTRN MOVE_CURSOR_RIGHT:NEAR
+EXTRN UPDATE_CURSOR:NEAR
+EXTRN WAIT_KEY:NEAR
+
+; Tamano de la cuadricula del editor (debe coincidir con EDITOR_TOP/BOTTOM/LEFT/RIGHT de PARTEA.ASM)
+
+OPEN_TOP EQU 1
+OPEN_ROWS EQU 23
+OPEN_COLS EQU 80
+
+; Limites del area del editor (deben coincidir con EDITOR_BOTTOM/EDITOR_RIGHT de PARTEA.ASM)
+
+IMG2_BOTTOM EQU 23
+IMG2_RIGHT EQU 79
+
+IMG2_ROWS EQU 32
+IMG2_COLS EQU 34
+
+IMG2_CHAR EQU 0DBH
+
+MAXPLACED2 EQU 20
+
+.DATA
+
+; Pantalla para pedir el nombre del archivo a abrir
+
+OPEN_TITLE DB ' ABRIR ARCHIVO '
+OPEN_TITLE_LEN EQU $-OPEN_TITLE
+
+OPEN_PROMPT DB 'Ingrese nombre (1-8 caracteres):'
+OPEN_PROMPT_LEN EQU $-OPEN_PROMPT
+
+OPEN_EXTENSION DB 'Se buscara el archivo con extension .FDJ'
+OPEN_EXTENSION_LEN EQU $-OPEN_EXTENSION
+
+; Mensajes de error propios de abrir archivo
+
+OPEN_ERR_EMPTY DB 'El nombre no puede estar vacio.'
+OPEN_ERR_EMPTY_LEN EQU $-OPEN_ERR_EMPTY
+
+OPEN_ERR_LONG DB 'El nombre debe tener maximo 8 caracteres.'
+OPEN_ERR_LONG_LEN EQU $-OPEN_ERR_LONG
+
+OPEN_ERR_CHAR DB 'Solo se permiten letras y numeros.'
+OPEN_ERR_CHAR_LEN EQU $-OPEN_ERR_CHAR
+
+OPEN_ERR_NOTFOUND DB 'El archivo no existe.'
+OPEN_ERR_NOTFOUND_LEN EQU $-OPEN_ERR_NOTFOUND
+
+OPEN_ERR_PATH DB 'No se encontro la ruta o carpeta.'
+OPEN_ERR_PATH_LEN EQU $-OPEN_ERR_PATH
+
+OPEN_ERR_ACCESS DB 'Acceso denegado al abrir el archivo.'
+OPEN_ERR_ACCESS_LEN EQU $-OPEN_ERR_ACCESS
+
+OPEN_ERR_FILES DB 'No hay suficientes archivos disponibles.'
+OPEN_ERR_FILES_LEN EQU $-OPEN_ERR_FILES
+
+OPEN_ERR_UNKNOWN DB 'No se pudo abrir el archivo.'
+OPEN_ERR_UNKNOWN_LEN EQU $-OPEN_ERR_UNKNOWN
+
+OPEN_ERROR_CODE DB 0
+
+OPEN_ERR_PTRS DW OPEN_ERR_EMPTY,OPEN_ERR_LONG,OPEN_ERR_CHAR,OPEN_ERR_NOTFOUND
+              DW OPEN_ERR_PATH,OPEN_ERR_ACCESS,OPEN_ERR_FILES,OPEN_ERR_UNKNOWN
+
+OPEN_ERR_LENS DW OPEN_ERR_EMPTY_LEN,OPEN_ERR_LONG_LEN,OPEN_ERR_CHAR_LEN,OPEN_ERR_NOTFOUND_LEN
+              DW OPEN_ERR_PATH_LEN,OPEN_ERR_ACCESS_LEN,OPEN_ERR_FILES_LEN,OPEN_ERR_UNKNOWN_LEN
+
+; Colores de fondo que alterna ALT+N: azul (el actual), gris, rosado (magenta) y verde
+
+BG_COLORS DB 01H,07H,05H,02H
+BG_INDEX DB 00H
+
+; Datos de la imagen 2 colocada con ALT+J (32 filas x 34 columnas)
+; Colores: 15=blanco 7=gris claro 0=negro 14=amarillo 12=rojo
+
+IMG2_DATA DB 7,15,15,15,7,7,7,7,15,15,15,7,7,7,15,15,15,7,7,7,15,15,15,15,7,7,7,15,15,15,7,7,7,15
+          DB 7,15,15,15,15,7,7,7,15,15,15,7,7,7,15,15,15,7,7,7,15,15,15,15,7,7,7,15,15,15,7,7,7,15
+          DB 7,15,15,15,15,7,14,7,15,15,15,7,7,14,15,15,15,7,7,7,7,15,15,15,7,7,7,15,15,15,7,7,7,15
+          DB 7,7,15,15,7,14,14,7,15,15,15,7,14,14,14,7,15,7,7,7,7,0,7,15,7,7,7,15,15,15,7,7,7,15
+          DB 15,7,7,7,14,14,14,14,7,7,7,15,7,14,7,7,7,0,0,15,7,7,0,7,15,15,7,7,7,7,15,15,15,7
+          DB 15,7,7,7,14,14,14,14,7,7,7,15,15,7,7,7,0,0,15,15,7,7,7,0,7,15,7,7,7,7,15,15,15,7
+          DB 15,15,7,7,7,14,14,7,7,7,0,0,0,0,7,7,7,15,15,15,7,0,0,0,7,15,7,7,7,7,15,15,15,7
+          DB 7,15,15,15,15,7,14,7,0,0,7,7,7,7,0,0,0,0,0,0,7,7,15,7,0,0,15,15,15,15,7,7,7,15
+          DB 7,15,15,15,15,7,7,0,7,7,7,15,15,15,15,15,7,15,15,15,15,15,15,15,15,7,0,0,7,15,7,7,7,15
+          DB 7,15,15,15,15,7,0,7,15,15,15,15,15,15,15,15,0,15,15,15,15,0,15,15,15,15,7,7,0,7,7,7,7,15
+          DB 15,7,7,7,7,15,0,7,15,15,15,15,15,15,15,0,7,0,15,15,0,7,0,15,15,15,15,7,7,0,7,15,15,7
+          DB 15,7,7,7,7,0,0,15,15,15,0,0,0,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,0,7,15,15,7
+          DB 15,7,7,7,7,0,7,15,15,15,0,0,0,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,7,0,15,15,7
+          DB 7,15,15,15,15,0,7,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,7,0,7,7,15
+          DB 7,15,15,15,15,0,7,15,15,15,15,15,15,15,15,15,15,15,15,15,15,0,15,15,15,15,15,15,7,7,7,0,7,15
+          DB 7,15,15,15,15,0,7,15,15,15,15,15,15,15,15,15,15,15,15,15,0,0,15,15,15,15,15,0,0,0,7,0,7,15
+          DB 15,7,7,7,7,0,7,7,15,0,0,0,7,15,15,15,15,15,7,0,0,0,15,15,15,15,15,0,0,0,7,0,7,7
+          DB 15,7,7,7,7,7,0,7,15,7,0,0,0,0,0,0,0,0,0,0,0,0,15,15,15,15,0,0,0,0,7,0,7,7
+          DB 15,7,7,7,7,15,15,0,7,15,15,0,0,0,0,0,0,0,0,0,0,7,15,15,15,15,0,0,0,0,7,0,7,7
+          DB 7,15,15,15,15,7,7,7,0,0,7,7,0,0,0,0,0,0,0,0,7,15,15,15,15,15,0,0,0,0,7,0,7,15
+          DB 7,15,15,15,15,14,7,7,15,7,0,0,7,7,0,0,0,0,0,15,15,15,15,15,7,15,0,0,0,0,7,0,7,15
+          DB 7,15,15,15,14,14,14,7,15,15,15,7,0,0,7,7,15,15,15,15,15,7,0,0,0,15,0,0,0,7,0,7,7,15
+          DB 15,7,7,7,7,14,7,7,7,7,7,15,15,15,0,0,7,15,15,15,7,0,7,7,0,7,7,15,7,0,7,15,15,7
+          DB 7,15,7,7,7,15,15,15,7,0,0,0,7,15,7,7,0,7,15,15,0,7,7,7,15,0,0,0,0,7,15,15,15,7
+          DB 7,15,7,7,7,15,15,15,0,0,7,0,0,0,0,7,0,7,7,15,0,7,7,7,15,15,7,7,7,7,15,15,15,7
+          DB 7,15,15,15,7,7,0,0,7,7,0,0,0,7,0,7,12,12,12,12,12,7,15,7,7,7,7,15,15,7,7,7,7,15
+          DB 7,15,15,15,15,7,0,0,15,0,0,0,15,15,0,7,0,7,7,15,0,7,15,15,7,7,7,15,15,15,7,7,7,15
+          DB 7,15,15,15,15,7,0,0,7,0,7,15,15,15,15,0,7,15,15,15,0,7,15,7,14,14,15,15,15,15,7,7,7,15
+          DB 7,15,15,15,15,7,7,0,7,0,0,15,15,15,15,7,0,0,7,15,7,0,7,7,14,7,7,15,15,15,7,7,7,15
+          DB 15,7,7,7,7,15,15,7,0,0,0,7,0,7,15,15,15,15,0,0,7,0,7,7,15,15,7,7,7,7,15,15,15,7
+          DB 15,7,7,7,7,15,15,15,7,7,7,0,7,0,0,7,15,15,15,15,7,0,7,7,15,15,7,7,7,7,15,15,15,7
+          DB 15,15,7,7,7,15,15,15,7,7,7,7,15,15,7,7,7,15,15,15,15,7,7,7,15,15,15,7,7,7,15,15,15,7
+
+IMG2_R DB 0
+IMG2_C DB 0
+IMG2_SROW DB 0
+IMG2_SCOL DB 0
+
+; Guarda la posicion de las imagenes 2 colocadas
+
+PLACEDCOUNT2 DW 0
+PLACED2 DB MAXPLACED2*3 DUP(0)
+
+; Pantallas para buscar y reemplazar texto (ALT+B)
+
+BR_TITLE DB ' BUSCAR Y REEMPLAZAR '
+BR_TITLE_LEN EQU $-BR_TITLE
+
+BR_PROMPT1 DB 'Buscar (1-8 caracteres):'
+BR_PROMPT1_LEN EQU $-BR_PROMPT1
+
+BR_PROMPT2 DB 'Reemplazar con (1-8 caracteres):'
+BR_PROMPT2_LEN EQU $-BR_PROMPT2
+
+SEARCH_WORD DB 8 DUP(0)
+SEARCH_LEN DB 0
+
+REPLACE_WORD DB 8 DUP(0)
+REPLACE_LEN DB 0
+
+; Pantalla de ayuda de atajos (ALT+H)
+
+HELP_TITLE DB ' ATAJOS DISPONIBLES '
+HELP_TITLE_LEN EQU $-HELP_TITLE
+
+HELP_L1 DB 'ALT+X  Guardar y salir del programa'
+HELP_L1_LEN EQU $-HELP_L1
+
+HELP_L2 DB 'ALT+S  Guardar y regresar al menu'
+HELP_L2_LEN EQU $-HELP_L2
+
+HELP_L3 DB 'ALT+Z  Regresar al menu sin guardar'
+HELP_L3_LEN EQU $-HELP_L3
+
+HELP_L4 DB 'ALT+M  Cambiar el color de la letra'
+HELP_L4_LEN EQU $-HELP_L4
+
+HELP_L5 DB 'ALT+N  Cambiar el color de fondo'
+HELP_L5_LEN EQU $-HELP_L5
+
+HELP_L6 DB 'ALT+C  Centrar el cursor'
+HELP_L6_LEN EQU $-HELP_L6
+
+HELP_L7 DB 'ALT+U  Llevar el cursor arriba'
+HELP_L7_LEN EQU $-HELP_L7
+
+HELP_L8 DB 'ALT+I  Colocar la imagen 1'
+HELP_L8_LEN EQU $-HELP_L8
+
+HELP_L9 DB 'ALT+J  Colocar la imagen 2'
+HELP_L9_LEN EQU $-HELP_L9
+
+HELP_L10 DB 'ALT+B  Buscar y reemplazar texto'
+HELP_L10_LEN EQU $-HELP_L10
+
+HELP_L11 DB 'ALT+H  Mostrar esta ayuda'
+HELP_L11_LEN EQU $-HELP_L11
+
+HELP_FOOT DB 'Presione una tecla para continuar...'
+HELP_FOOT_LEN EQU $-HELP_FOOT
+
+.CODE
+
+; Muestra la pantalla para pedir el nombre del archivo a abrir
+
+SHOWOPEN PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH BP
+
+    CALL Q10CLEAR
+
+    MOV BP,OFFSET OPEN_TITLE
+    MOV CX,OPEN_TITLE_LEN
+    MOV DH,05
+    MOV DL,22
+    MOV BL,1EH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET OPEN_PROMPT
+    MOV CX,OPEN_PROMPT_LEN
+    MOV DH,08
+    MOV DL,24
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET OPEN_EXTENSION
+    MOV CX,OPEN_EXTENSION_LEN
+    MOV DH,11
+    MOV DL,16
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV AH,02H
+    MOV BH,00H
+    MOV DH,09
+    MOV DL,22
+
+    INT 10H
+
+    POP BP
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+SHOWOPEN ENDP
+
+; Carga el contenido del archivo ya abierto dentro del buffer del editor
+
+LOADTEXT PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+
+    CALL EDITOR_INIT
+
+    MOV BX,FILE_HANDLE
+
+    MOV AH,3FH
+    MOV CX,1840
+
+    LEA DX,TEXT_BUFFER
+
+    INT 21H
+
+    MOV BX,FILE_HANDLE
+
+    MOV AH,3FH
+    MOV CX,1840
+
+    LEA DX,ATTR_BUFFER
+
+    INT 21H
+
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+LOADTEXT ENDP
+
+; Pide el nombre, valida, abre el archivo existente y carga su contenido
+; AL=0FFH cancelado, AL=00H exito, AL=01H error (revisar OPEN_ERROR_CODE)
+
+PUBLIC OPENFILE
+
+OPENFILE PROC NEAR
+
+    CALL SHOWOPEN
+    CALL GET_FILENAME_INPUT
+
+    CMP AL,0FFH
+    JNE OF_CHECK_EMPTY
+    RET
+
+OF_CHECK_EMPTY:
+
+    CMP BYTE PTR INPUT_NAME+1,00H
+    JNE OF_CHECK_LENGTH
+    JMP OF_EMPTY_ERROR
+
+OF_EMPTY_ERROR:
+
+    MOV OPEN_ERROR_CODE,01H
+    MOV AL,01H
+    RET
+
+OF_CHECK_LENGTH:
+
+    CMP BYTE PTR INPUT_NAME+1,08H
+    JBE OF_CHECK_CHARS
+    JMP OF_LONG_ERROR
+
+OF_LONG_ERROR:
+
+    MOV OPEN_ERROR_CODE,02H
+    MOV AL,01H
+    RET
+
+OF_CHECK_CHARS:
+
+    CALL PROCESS_NAME
+
+    CMP AL,00H
+    JE OF_BUILD_NAME
+    JMP OF_CHAR_ERROR
+
+OF_CHAR_ERROR:
+
+    MOV OPEN_ERROR_CODE,03H
+    MOV AL,01H
+    RET
+
+OF_BUILD_NAME:
+
+    CALL BUILD_FILENAME
+
+    LEA DX,FILE_NAME
+    MOV AL,02H
+    MOV AH,3DH
+
+    INT 21H
+
+    JNC OF_SUCCESS
+    JMP OF_DOS_ERROR
+
+OF_SUCCESS:
+
+    MOV FILE_HANDLE,AX
+    CALL LOADTEXT
+    MOV AL,00H
+    RET
+
+OF_DOS_ERROR:
+
+    CMP AX,0002H
+    JNE OF_ERROR_PATH
+    JMP OF_NOTFOUND_ERROR
+
+OF_NOTFOUND_ERROR:
+
+    MOV OPEN_ERROR_CODE,04H
+    MOV AL,01H
+    RET
+
+OF_ERROR_PATH:
+
+    CMP AX,0003H
+    JNE OF_ERROR_ACCESS
+    JMP OF_PATH_ERROR
+
+OF_PATH_ERROR:
+
+    MOV OPEN_ERROR_CODE,05H
+    MOV AL,01H
+    RET
+
+OF_ERROR_ACCESS:
+
+    CMP AX,0005H
+    JNE OF_ERROR_FILES
+    JMP OF_ACCESS_ERROR
+
+OF_ACCESS_ERROR:
+
+    MOV OPEN_ERROR_CODE,06H
+    MOV AL,01H
+    RET
+
+OF_ERROR_FILES:
+
+    CMP AX,0004H
+    JNE OF_ERROR_OTHER
+    JMP OF_FILES_ERROR
+
+OF_FILES_ERROR:
+
+    MOV OPEN_ERROR_CODE,07H
+    MOV AL,01H
+    RET
+
+OF_ERROR_OTHER:
+
+    MOV OPEN_ERROR_CODE,08H
+    MOV AL,01H
+    RET
+
+OPENFILE ENDP
+
+; Muestra el mensaje correspondiente al error de abrir archivo
+
+PUBLIC SHOWERR
+
+SHOWERR PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH SI
+    PUSH BP
+
+    CALL Q10CLEAR
+
+    MOV BP,OFFSET CREATE_ERROR_TITLE
+    MOV CX,7
+    MOV DH,05
+    MOV DL,36
+    MOV BL,1CH
+    CALL PRINT_AT
+
+    XOR AX,AX
+    MOV AL,OPEN_ERROR_CODE
+    DEC AL
+
+    SHL AX,1
+
+    MOV SI,AX
+
+    MOV BP,OPEN_ERR_PTRS[SI]
+    MOV CX,OPEN_ERR_LENS[SI]
+
+    MOV DH,09
+    MOV DL,20
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET PRESS_KEY
+    MOV CX,36
+    MOV DH,14
+    MOV DL,22
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    POP BP
+    POP SI
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+SHOWERR ENDP
+
+; Dibuja en pantalla el texto ya cargado en el buffer del editor
+; Se llama despues de DRAW_EDITOR y antes de EDITOR_LOOP
+
+PUBLIC DRAWTEXT
+
+DRAWTEXT PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH SI
+    PUSH DI
+
+    XOR SI,SI
+
+DT_LOOP:
+
+    CMP SI,1840
+    JAE DT_DONE
+
+    MOV AX,SI
+    MOV BL,OPEN_COLS
+
+    DIV BL
+
+    MOV DH,AL
+    ADD DH,OPEN_TOP
+    MOV DL,AH
+
+    MOV AH,02H
+    MOV BH,00H
+
+    INT 10H
+
+    MOV DI,OFFSET TEXT_BUFFER
+    ADD DI,SI
+    MOV AL,[DI]
+
+    MOV DI,OFFSET ATTR_BUFFER
+    ADD DI,SI
+    MOV BL,[DI]
+
+    MOV AH,09H
+    MOV BH,00H
+    MOV CX,0001H
+
+    INT 10H
+
+    INC SI
+
+    JMP DT_LOOP
+
+DT_DONE:
+
+    POP DI
+    POP SI
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+DRAWTEXT ENDP
+
+; Alterna el color de fondo para lo que se va a escribir con ALT+N
+; Solo cambia el nibble alto (fondo) de EDITOR_ATTRIB, deja igual el nibble
+; bajo (letra), y no afecta el texto que ya esta escrito en pantalla
+
+PUBLIC ALTN
+
+ALTN PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+
+    INC BG_INDEX
+
+    CMP BG_INDEX,04H
+    JB ALTN_SET
+
+    MOV BG_INDEX,00H
+
+ALTN_SET:
+
+    XOR BX,BX
+    MOV BL,BG_INDEX
+
+    MOV AL,BG_COLORS[BX]
+    MOV CL,04H
+    SHL AL,CL
+
+    AND EDITOR_ATTRIB,0FH
+    OR EDITOR_ATTRIB,AL
+
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+ALTN ENDP
+
+; Pone el fondo de vuelta en el primero de la lista (azul) y reinicia el
+; indice del ciclo de ALT+N. Se llama al crear o abrir un documento
+
+PUBLIC RESETBG
+
+RESETBG PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+
+    MOV BG_INDEX,00H
+
+    XOR BX,BX
+    MOV BL,BG_INDEX
+
+    MOV AL,BG_COLORS[BX]
+    MOV CL,04H
+    SHL AL,CL
+
+    AND EDITOR_ATTRIB,0FH
+    OR EDITOR_ATTRIB,AL
+
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+RESETBG ENDP
+
+; Escribe un caracter en el buffer de texto y guarda el color con el que
+; se escribio en ATTR_BUFFER, en la misma posicion. Se llama desde EL_WRITE
+; (PARTEA.ASM); reemplaza lo que antes hacia ese bloque directamente
+
+PUBLIC STORE_CHAR
+
+STORE_CHAR PROC NEAR
+
+    PUSH BX
+    PUSH DX
+    PUSH SI
+    PUSH DI
+
+    CALL GET_BUFFER_POSITION
+
+    MOV [DI],AL
+
+    MOV BL,EDITOR_ATTRIB
+
+    PUSH DI
+    MOV DI,OFFSET ATTR_BUFFER
+    ADD DI,SI
+    MOV [DI],BL
+    POP DI
+
+    MOV AH,09H
+    MOV BH,00H
+    MOV CX,0001H
+
+    INT 10H
+
+    CALL RESTORE_IMAGE_PIXEL
+    CALL RESTORE_IMAGE2_PIXEL
+    CALL MOVE_CURSOR_RIGHT
+
+    POP DI
+    POP SI
+    POP DX
+    POP BX
+
+    RET
+
+STORE_CHAR ENDP
+
+; Borra el caracter en la posicion actual (lo deja en espacio) y guarda el
+; color actual en ATTR_BUFFER para esa posicion. Se llama desde
+; EL_BACKSPACE_DELETE (PARTEA.ASM)
+
+PUBLIC CLEAR_CHAR
+
+CLEAR_CHAR PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH SI
+    PUSH DI
+
+    CALL GET_BUFFER_POSITION
+
+    MOV BYTE PTR [DI],' '
+
+    MOV BL,EDITOR_ATTRIB
+
+    PUSH DI
+    MOV DI,OFFSET ATTR_BUFFER
+    ADD DI,SI
+    MOV [DI],BL
+    POP DI
+
+    MOV AH,02H
+    MOV BH,00H
+    MOV DH,EDITOR_ROW
+    MOV DL,EDITOR_COL
+
+    INT 10H
+
+    MOV AL,' '
+    MOV AH,09H
+    MOV BH,00H
+    MOV CX,0001H
+
+    INT 10H
+
+    CALL RESTORE_IMAGE_PIXEL
+    CALL RESTORE_IMAGE2_PIXEL
+
+    POP DI
+    POP SI
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+CLEAR_CHAR ENDP
+
+; Registra la posicion de una imagen 2 colocada
+
+G20ADD2 PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DI
+
+    MOV BX,PLACEDCOUNT2
+    CMP BX,MAXPLACED2
+    JB G20_SPACE_OK
+
+    JMP G20_END
+
+G20_SPACE_OK:
+
+    MOV AX,BX
+    MOV CX,3
+    MUL CX
+
+    MOV DI,OFFSET PLACED2
+    ADD DI,AX
+
+    MOV BYTE PTR [DI],01H
+
+    MOV AL,EDITOR_ROW
+    MOV [DI+1],AL
+
+    MOV AL,EDITOR_COL
+    MOV [DI+2],AL
+
+    INC PLACEDCOUNT2
+
+G20_END:
+
+    POP DI
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+G20ADD2 ENDP
+
+; Dibuja la imagen 2 (sin transparencia, todo el rectangulo es opaco)
+
+DRAW_IMAGE2 PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH SI
+
+    MOV AL,EDITOR_ROW
+    MOV IMG2_SROW,AL
+
+    MOV AL,EDITOR_COL
+    MOV IMG2_SCOL,AL
+
+    MOV IMG2_R,0
+
+DI2_ROWLOOP:
+
+    MOV AL,IMG2_R
+    CMP AL,IMG2_ROWS
+    JB DI2_ROW_OK
+
+    JMP DI2_DONE
+
+DI2_ROW_OK:
+
+    MOV AL,IMG2_SROW
+    ADD AL,IMG2_R
+
+    CMP AL,IMG2_BOTTOM
+    JBE DI2_ROW_VISIBLE
+
+    JMP DI2_DONE
+
+DI2_ROW_VISIBLE:
+
+    MOV IMG2_C,0
+
+DI2_COLLOOP:
+
+    MOV AL,IMG2_C
+    CMP AL,IMG2_COLS
+    JB DI2_COL_OK
+
+    JMP DI2_NEXTROW
+
+DI2_COL_OK:
+
+    MOV AL,IMG2_SCOL
+    ADD AL,IMG2_C
+
+    CMP AL,IMG2_RIGHT
+    JBE DI2_COL_VISIBLE
+
+    JMP DI2_NEXTCOL
+
+DI2_COL_VISIBLE:
+
+    XOR AX,AX
+    MOV AL,IMG2_R
+
+    MOV BL,IMG2_COLS
+    MUL BL
+
+    XOR BX,BX
+    MOV BL,IMG2_C
+
+    ADD AX,BX
+
+    MOV SI,OFFSET IMG2_DATA
+    ADD SI,AX
+
+    MOV AL,[SI]
+    MOV BL,AL
+
+    MOV AH,02H
+    MOV BH,00H
+
+    MOV DH,IMG2_SROW
+    ADD DH,IMG2_R
+
+    MOV DL,IMG2_SCOL
+    ADD DL,IMG2_C
+
+    INT 10H
+
+    MOV AH,09H
+    MOV AL,IMG2_CHAR
+    MOV BH,00H
+    MOV CX,0001H
+
+    INT 10H
+
+DI2_NEXTCOL:
+
+    INC IMG2_C
+    JMP DI2_COLLOOP
+
+DI2_NEXTROW:
+
+    INC IMG2_R
+    JMP DI2_ROWLOOP
+
+DI2_DONE:
+
+    CALL UPDATE_CURSOR
+
+    POP SI
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+DRAW_IMAGE2 ENDP
+
+; Restaura la imagen 2 despues de escribir sobre ella
+; Se llama desde STORE_CHAR y CLEAR_CHAR para que la imagen quede
+; siempre por encima del texto
+
+PUBLIC RESTORE_IMAGE2_PIXEL
+
+RESTORE_IMAGE2_PIXEL PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH SI
+    PUSH DI
+
+    XOR SI,SI
+
+RIP2_LOOP:
+
+    MOV AX,SI
+    CMP AX,PLACEDCOUNT2
+    JB RIP2_ENTRY_OK
+
+    JMP RIP2_DONE
+
+RIP2_ENTRY_OK:
+
+    MOV AX,SI
+    MOV CX,3
+    MUL CX
+
+    MOV DI,OFFSET PLACED2
+    ADD DI,AX
+
+    XOR AX,AX
+    MOV AL,EDITOR_ROW
+
+    XOR CX,CX
+    MOV CL,[DI+1]
+
+    SUB AX,CX
+
+    JNS RIP2_ROW_POS
+
+    JMP RIP2_NEXT
+
+RIP2_ROW_POS:
+
+    CMP AX,IMG2_ROWS
+    JB RIP2_ROW_OK
+
+    JMP RIP2_NEXT
+
+RIP2_ROW_OK:
+
+    MOV DX,AX
+
+    XOR AX,AX
+    MOV AL,EDITOR_COL
+
+    XOR CX,CX
+    MOV CL,[DI+2]
+
+    SUB AX,CX
+
+    JNS RIP2_COL_POS
+
+    JMP RIP2_NEXT
+
+RIP2_COL_POS:
+
+    CMP AX,IMG2_COLS
+    JB RIP2_COL_OK
+
+    JMP RIP2_NEXT
+
+RIP2_COL_OK:
+
+    PUSH AX
+
+    MOV AX,DX
+    MOV CX,IMG2_COLS
+    MUL CX
+
+    POP CX
+
+    ADD AX,CX
+
+    MOV BX,OFFSET IMG2_DATA
+    ADD BX,AX
+
+    MOV AL,[BX]
+    MOV BL,AL
+
+    MOV AH,02H
+    MOV BH,00H
+    MOV DH,EDITOR_ROW
+    MOV DL,EDITOR_COL
+
+    INT 10H
+
+    MOV AH,09H
+    MOV AL,IMG2_CHAR
+    MOV BH,00H
+    MOV CX,0001H
+
+    INT 10H
+
+RIP2_NEXT:
+
+    INC SI
+    JMP RIP2_LOOP
+
+RIP2_DONE:
+
+    POP DI
+    POP SI
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+RESTORE_IMAGE2_PIXEL ENDP
+
+; Coloca la imagen 2 en la posicion actual del cursor con ALT+J
+
+PUBLIC ALTJ
+
+ALTJ PROC NEAR
+
+    CALL G20ADD2
+    CALL DRAW_IMAGE2
+
+    RET
+
+ALTJ ENDP
+
+; Muestra la lista de atajos disponibles y espera una tecla (ALT+H)
+
+PUBLIC SHOWHELP
+
+SHOWHELP PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH BP
+
+    CALL Q10CLEAR
+
+    MOV BP,OFFSET HELP_TITLE
+    MOV CX,HELP_TITLE_LEN
+    MOV DH,01
+    MOV DL,30
+    MOV BL,1EH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET HELP_L1
+    MOV CX,HELP_L1_LEN
+    MOV DH,04
+    MOV DL,20
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET HELP_L2
+    MOV CX,HELP_L2_LEN
+    MOV DH,05
+    MOV DL,20
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET HELP_L3
+    MOV CX,HELP_L3_LEN
+    MOV DH,06
+    MOV DL,20
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET HELP_L4
+    MOV CX,HELP_L4_LEN
+    MOV DH,07
+    MOV DL,20
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET HELP_L5
+    MOV CX,HELP_L5_LEN
+    MOV DH,08
+    MOV DL,20
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET HELP_L6
+    MOV CX,HELP_L6_LEN
+    MOV DH,09
+    MOV DL,20
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET HELP_L7
+    MOV CX,HELP_L7_LEN
+    MOV DH,10
+    MOV DL,20
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET HELP_L8
+    MOV CX,HELP_L8_LEN
+    MOV DH,11
+    MOV DL,20
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET HELP_L9
+    MOV CX,HELP_L9_LEN
+    MOV DH,12
+    MOV DL,20
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET HELP_L10
+    MOV CX,HELP_L10_LEN
+    MOV DH,13
+    MOV DL,20
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET HELP_L11
+    MOV CX,HELP_L11_LEN
+    MOV DH,14
+    MOV DL,20
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET HELP_FOOT
+    MOV CX,HELP_FOOT_LEN
+    MOV DH,18
+    MOV DL,22
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    CALL WAIT_KEY
+
+    POP BP
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+SHOWHELP ENDP
+
+; Muestra la pantalla para pedir la palabra a buscar
+
+SHOWSEARCH1 PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH BP
+
+    CALL Q10CLEAR
+
+    MOV BP,OFFSET BR_TITLE
+    MOV CX,BR_TITLE_LEN
+    MOV DH,05
+    MOV DL,22
+    MOV BL,1EH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET BR_PROMPT1
+    MOV CX,BR_PROMPT1_LEN
+    MOV DH,08
+    MOV DL,24
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV AH,02H
+    MOV BH,00H
+    MOV DH,09
+    MOV DL,22
+
+    INT 10H
+
+    POP BP
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+SHOWSEARCH1 ENDP
+
+; Muestra la pantalla para pedir la palabra de reemplazo
+
+SHOWSEARCH2 PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH BP
+
+    CALL Q10CLEAR
+
+    MOV BP,OFFSET BR_TITLE
+    MOV CX,BR_TITLE_LEN
+    MOV DH,05
+    MOV DL,22
+    MOV BL,1EH
+    CALL PRINT_AT
+
+    MOV BP,OFFSET BR_PROMPT2
+    MOV CX,BR_PROMPT2_LEN
+    MOV DH,08
+    MOV DL,24
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    MOV AH,02H
+    MOV BH,00H
+    MOV DH,09
+    MOV DL,22
+
+    INT 10H
+
+    POP BP
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+SHOWSEARCH2 ENDP
+
+; Copia lo escrito en INPUT_NAME hacia SEARCH_WORD/SEARCH_LEN
+
+COPYSEARCH PROC NEAR
+
+    PUSH AX
+    PUSH CX
+    PUSH SI
+    PUSH DI
+
+    MOV AL,BYTE PTR INPUT_NAME+1
+    MOV SEARCH_LEN,AL
+
+    XOR CX,CX
+    MOV CL,AL
+
+    LEA SI,INPUT_NAME+2
+    LEA DI,SEARCH_WORD
+
+CS_LOOP:
+
+    CMP CX,0000H
+    JE CS_DONE
+
+    MOV AL,[SI]
+    MOV [DI],AL
+
+    INC SI
+    INC DI
+    DEC CX
+
+    JMP CS_LOOP
+
+CS_DONE:
+
+    POP DI
+    POP SI
+    POP CX
+    POP AX
+
+    RET
+
+COPYSEARCH ENDP
+
+; Copia lo escrito en INPUT_NAME hacia REPLACE_WORD/REPLACE_LEN
+
+COPYREPLACE PROC NEAR
+
+    PUSH AX
+    PUSH CX
+    PUSH SI
+    PUSH DI
+
+    MOV AL,BYTE PTR INPUT_NAME+1
+    MOV REPLACE_LEN,AL
+
+    XOR CX,CX
+    MOV CL,AL
+
+    LEA SI,INPUT_NAME+2
+    LEA DI,REPLACE_WORD
+
+CR_LOOP:
+
+    CMP CX,0000H
+    JE CR_DONE
+
+    MOV AL,[SI]
+    MOV [DI],AL
+
+    INC SI
+    INC DI
+    DEC CX
+
+    JMP CR_LOOP
+
+CR_DONE:
+
+    POP DI
+    POP SI
+    POP CX
+    POP AX
+
+    RET
+
+COPYREPLACE ENDP
+
+; Busca todas las apariciones de SEARCH_WORD en TEXT_BUFFER y las
+; reemplaza por REPLACE_WORD (rellena con espacios si es mas corta,
+; la recorta si es mas larga, para no mover el resto del texto)
+
+DOREPLACE PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH SI
+    PUSH DI
+
+    CMP SEARCH_LEN,00H
+    JE DR_DONE
+
+    MOV SI,0000H
+
+DR_OUTER:
+
+    MOV AX,SI
+    XOR CH,CH
+    MOV CL,SEARCH_LEN
+    ADD AX,CX
+
+    CMP AX,1840
+    JA DR_DONE
+
+    XOR BX,BX
+
+DR_CMP:
+
+    CMP BL,SEARCH_LEN
+    JAE DR_MATCH
+
+    LEA DI,TEXT_BUFFER
+    ADD DI,SI
+    ADD DI,BX
+    MOV AL,[DI]
+
+    LEA DI,SEARCH_WORD
+    ADD DI,BX
+    MOV AH,[DI]
+
+    CMP AL,AH
+    JNE DR_NOMATCH
+
+    INC BX
+    JMP DR_CMP
+
+DR_MATCH:
+
+    XOR BX,BX
+
+DR_WRITE:
+
+    CMP BL,SEARCH_LEN
+    JAE DR_ADVANCE
+
+    CMP BL,REPLACE_LEN
+    JAE DR_WRITE_SPACE
+
+    LEA DI,REPLACE_WORD
+    ADD DI,BX
+    MOV AL,[DI]
+
+    JMP DR_WRITE_CHAR
+
+DR_WRITE_SPACE:
+
+    MOV AL,' '
+
+DR_WRITE_CHAR:
+
+    LEA DI,TEXT_BUFFER
+    ADD DI,SI
+    ADD DI,BX
+    MOV [DI],AL
+
+    LEA DI,ATTR_BUFFER
+    ADD DI,SI
+    ADD DI,BX
+    MOV DL,EDITOR_ATTRIB
+    MOV [DI],DL
+
+    INC BX
+    JMP DR_WRITE
+
+DR_ADVANCE:
+
+    MOV AX,SI
+    XOR CH,CH
+    MOV CL,SEARCH_LEN
+    ADD AX,CX
+    MOV SI,AX
+
+    JMP DR_OUTER
+
+DR_NOMATCH:
+
+    INC SI
+    JMP DR_OUTER
+
+DR_DONE:
+
+    POP DI
+    POP SI
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+DOREPLACE ENDP
+
+; Pide palabra a buscar y palabra de reemplazo, y hace el reemplazo (ALT+B)
+; Cancelar con ALT+Z/ALT+X en cualquiera de los dos pasos no cambia nada
+
+PUBLIC ALTB
+
+ALTB PROC NEAR
+
+    CALL SHOWSEARCH1
+    CALL GET_FILENAME_INPUT
+
+    CMP AL,0FFH
+    JE ALTB_END
+
+    CMP BYTE PTR INPUT_NAME+1,00H
+    JE ALTB_END
+
+    CALL COPYSEARCH
+
+    CALL SHOWSEARCH2
+    CALL GET_FILENAME_INPUT
+
+    CMP AL,0FFH
+    JE ALTB_END
+
+    CALL COPYREPLACE
+
+    CALL DOREPLACE
+
+ALTB_END:
+
+    RET
+
+ALTB ENDP
+
+END
