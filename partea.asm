@@ -51,6 +51,12 @@ CREATE_TITLE DB ' CREAR ARCHIVO '
 CREATE_PROMPT DB 'Ingrese nombre (1-8 caracteres):'
 CREATE_EXTENSION DB 'La extension .FDJ se agregara automaticamente.'
 
+; Alerta de longitud maxima mostrada en tiempo real
+
+ALERT_MSG DB 'Maximo 8 caracteres alcanzado'
+ALERT_LEN EQU $-ALERT_MSG
+ALERT_BLANK DB ALERT_LEN DUP(' ')
+
 CREATE_ERROR_TITLE DB ' ERROR '
 
 ERROR_EMPTY DB 'El nombre no puede estar vacio.'
@@ -187,6 +193,12 @@ A20_CHECK_ALTX:
 A20_CREATE:
 
     CALL CREATE_FILE
+
+    CMP AL,0FFH
+    JNE A20_CREATE_CHECKERR
+    JMP A20
+
+A20_CREATE_CHECKERR:
 
     CMP AL,00H
     JNE A20_CREATE_ERROR
@@ -631,17 +643,230 @@ SHOW_CREATE_SCREEN PROC NEAR
 
 SHOW_CREATE_SCREEN ENDP
 
+; Muestra la alerta de longitud maxima sin mover el cursor
+
+SHOW_LENGTH_ALERT PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH BP
+
+    MOV AH,03H
+    MOV BH,00H
+    INT 10H
+
+    PUSH DX
+
+    MOV BP,OFFSET ALERT_MSG
+    MOV CX,ALERT_LEN
+    MOV DH,13
+    MOV DL,20
+    MOV BL,1CH
+    CALL PRINT_AT
+
+    POP DX
+
+    MOV AH,02H
+    MOV BH,00H
+    INT 10H
+
+    POP BP
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+SHOW_LENGTH_ALERT ENDP
+
+; Oculta la alerta de longitud maxima sin mover el cursor
+
+HIDE_LENGTH_ALERT PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH BP
+
+    MOV AH,03H
+    MOV BH,00H
+    INT 10H
+
+    PUSH DX
+
+    MOV BP,OFFSET ALERT_BLANK
+    MOV CX,ALERT_LEN
+    MOV DH,13
+    MOV DL,20
+    MOV BL,1FH
+    CALL PRINT_AT
+
+    POP DX
+
+    MOV AH,02H
+    MOV BH,00H
+    INT 10H
+
+    POP BP
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+HIDE_LENGTH_ALERT ENDP
+
+; Lee el nombre del archivo tecla por tecla con validacion en vivo
+
+GET_FILENAME_INPUT PROC NEAR
+
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH DI
+
+    MOV BYTE PTR INPUT_NAME+1,00H
+
+GFI_READ:
+
+    MOV AH,10H
+    INT 16H
+
+    CMP AX,2D00H
+    JNE GFI_CHECK_ALTZ
+    JMP GFI_CANCEL
+
+GFI_CHECK_ALTZ:
+
+    CMP AX,2C00H
+    JNE GFI_CHECK_ENTER
+    JMP GFI_CANCEL
+
+GFI_CHECK_ENTER:
+
+    CMP AL,0DH
+    JNE GFI_CHECK_BACK
+    JMP GFI_DONE
+
+GFI_CHECK_BACK:
+
+    CMP AL,08H
+    JNE GFI_CHECK_CHAR
+    JMP GFI_BACKSPACE
+
+; Agrega el caracter escrito y valida la longitud en vivo
+
+GFI_CHECK_CHAR:
+
+    CMP AL,00H
+    JE GFI_READ
+
+    MOV DL,BYTE PTR INPUT_NAME+1
+    CMP DL,MAXINPUT
+    JAE GFI_READ
+
+    XOR BX,BX
+    MOV BL,DL
+    LEA DI,INPUT_NAME+2
+    ADD DI,BX
+    MOV [DI],AL
+
+    INC BYTE PTR INPUT_NAME+1
+
+    MOV DL,AL
+    MOV AH,02H
+    INT 21H
+
+    MOV AL,BYTE PTR INPUT_NAME+1
+    CMP AL,08H
+    JBE GFI_READ
+
+    CALL SHOW_LENGTH_ALERT
+
+    JMP GFI_READ
+
+; Borra el ultimo caracter escrito
+
+GFI_BACKSPACE:
+
+    CMP BYTE PTR INPUT_NAME+1,00H
+    JE GFI_READ
+
+    DEC BYTE PTR INPUT_NAME+1
+
+    MOV AH,03H
+    MOV BH,00H
+    INT 10H
+
+    DEC DL
+
+    MOV AH,02H
+    MOV BH,00H
+    INT 10H
+
+    MOV DL,' '
+    MOV AH,02H
+    INT 21H
+
+    MOV AH,03H
+    MOV BH,00H
+    INT 10H
+
+    DEC DL
+
+    MOV AH,02H
+    MOV BH,00H
+    INT 10H
+
+    MOV AL,BYTE PTR INPUT_NAME+1
+    CMP AL,08H
+    JBE GFI_HIDE_ALERT
+
+    JMP GFI_READ
+
+GFI_HIDE_ALERT:
+
+    CALL HIDE_LENGTH_ALERT
+
+    JMP GFI_READ
+
+GFI_CANCEL:
+
+    MOV AL,0FFH
+    JMP GFI_END
+
+GFI_DONE:
+
+    MOV AL,00H
+
+GFI_END:
+
+    POP DI
+    POP DX
+    POP CX
+    POP BX
+
+    RET
+
+GET_FILENAME_INPUT ENDP
+
 ; Crea el archivo y valida su nombre
 
 CREATE_FILE PROC NEAR
 
     CALL SHOW_CREATE_SCREEN
+    CALL GET_FILENAME_INPUT
 
-    MOV BYTE PTR INPUT_NAME+1,00H
+    CMP AL,0FFH
+    JNE CREATE_CHECK_EMPTY
+    RET
 
-    LEA DX,INPUT_NAME
-    MOV AH,0AH
-    INT 21H
+CREATE_CHECK_EMPTY:
 
     CMP BYTE PTR INPUT_NAME+1,00H
     JNE CREATE_CHECK_LENGTH
